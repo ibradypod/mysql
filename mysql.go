@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -146,11 +147,34 @@ func (dialector Dialector) ClauseBuilders() map[string]clause.ClauseBuilder {
 			}
 		},
 		"VALUES": func(c clause.Clause, builder clause.Builder) {
-			if values, ok := c.Expression.(clause.Values); ok && len(values.Columns) == 0 {
-				builder.WriteString("VALUES()")
-				return
+			defer func() {
+				if values, ok := c.Expression.(clause.Values); ok && len(values.Columns) == 0 {
+					builder.WriteString("VALUES()")
+					return
+				}
+				c.Build(builder)
+			}()
+			stmt, ok := builder.(*gorm.Statement)
+			if ok && stmt.Schema != nil && c.Expression != nil {
+				expr, ok := c.Expression.(clause.Values)
+				if !ok {
+					return
+				}
+				for i, column := range expr.Columns {
+					field, ok := stmt.Schema.FieldsByDBName[column.Name]
+					if !ok || field.DataType != "json" {
+						continue
+					}
+					for _, value := range expr.Values {
+						if value[i] != nil {
+							content, err := json.Marshal(value[i])
+							if err == nil {
+								value[i] = string(content)
+							}
+						}
+					}
+				}
 			}
-			c.Build(builder)
 		},
 	}
 
